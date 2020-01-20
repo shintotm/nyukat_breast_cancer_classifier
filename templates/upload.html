@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Table Upload</title>
+</head>
+<body>
+<form action="/upload" method="POST" enctype="multipart/form-data">
+    <table>
+            <tr>
+                <td>Left CC</td>
+                <td><input type="file" name="L-CC"></td>
+            </tr>
+            <tr>
+                <td>Left MLO</td>
+                <td><input type="file" name="L-MLO"></td>
+            </tr>
+            <tr>
+                <td>Right CC</td>
+                <td><input type="file" name="R-CC"></td>
+            </tr>
+            <tr>
+                <td>Right MLO</td>
+                <td><input type="file" name="R-MLO"></td>
+            </tr>
+    </table>
+    <input type="submit" value="Upload">
+</form>
+</body>
+</html>
