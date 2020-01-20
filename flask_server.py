@@ -52,12 +52,12 @@ def get_predictions():
     exam_list = []
     exam_item = {}
     exam_item['horizontal_flip'] = 'NO'
-    
+
     for view in img_views:
-        if view in flask.request.files:
+
+        if view in flask.request.files and flask.request.files[view].filename !='':
             view_file = flask.request.files[view]
             filename = view_file.filename
-            print(filename)
             view_file.save(os.path.join(DATA_FOLDER, view_file.filename))
             exam_item[view] = [os.path.splitext(filename)[0]]
         else:
