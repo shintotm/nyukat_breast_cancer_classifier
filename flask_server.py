@@ -14,6 +14,7 @@ from src.constants import VIEWS, VIEWANGLES, LABELS, MODELMODES
 
 import random
 import pandas as pd
+import json
 
 
 DATA_FOLDER='uploads'
@@ -42,9 +43,10 @@ app = flask.Flask(__name__)
 def clear_uploads(folder):
     if os.path.exists(folder):
         shutil.rmtree(folder)
+        
+        
 
-def get_predictions():
-    
+def validate_uploads():
     img_views = ['L-CC', 'L-MLO', 'R-CC', 'R-MLO']
     clear_uploads(DATA_FOLDER)
     os.mkdir(DATA_FOLDER)
@@ -55,75 +57,109 @@ def get_predictions():
 
     for view in img_views:
 
-        if view in flask.request.files and flask.request.files[view].filename !='':
+        if view in flask.request.files:
             view_file = flask.request.files[view]
             filename = view_file.filename
             view_file.save(os.path.join(DATA_FOLDER, view_file.filename))
+
             exam_item[view] = [os.path.splitext(filename)[0]]
         else:
             # delet the uploaded files
             clear_uploads(DATA_FOLDER)
-            return " Error: Missing " + view + ". Four standard views are required"
+            raise ValueError("Missing " + view + ". Four standard views are required")
     exam_list.append(exam_item)    
     print("Upload successfull")
     print(exam_list)
-    pickling.pickle_to_file('uploads/exam_list_before_cropping.pkl', exam_list)
+    return exam_list
+
+def get_predictions():
     
-    clear_uploads(CROPPED_IMAGE_PATH)
-    crop_mammogram(
-        input_data_folder=DATA_FOLDER, 
-        exam_list_path=INITIAL_EXAM_LIST_PATH, 
-        cropped_exam_list_path=CROPPED_EXAM_LIST_PATH, 
-        output_data_folder=CROPPED_IMAGE_PATH, 
-        num_processes=NUM_PROCESSES,
-        num_iterations=100,
-        buffer_size=50,
-    )
-    print("Stage 2: Extract Centers")
-    exam_list = pickling.unpickle_from_file(CROPPED_EXAM_LIST_PATH)
-    data_list = data_handling.unpack_exam_into_images(exam_list, cropped=True)
-    optimal_centers = get_optimal_centers(
-        data_list=data_list,
-        data_prefix=CROPPED_IMAGE_PATH,
-        num_processes=NUM_PROCESSES
-    )
-    data_handling.add_metadata(exam_list, "best_center", optimal_centers)
-    os.makedirs(os.path.dirname(EXAM_LIST_PATH), exist_ok=True)
-    pickling.pickle_to_file(EXAM_LIST_PATH, exam_list)
+    data = {"success": False}
     
-    print("Stage 3: Generate Heatmaps")
-    
-    parameters = dict(
-        device_type=DEVICE_TYPE,
-        gpu_number=GPU_NUMBER,
+    try:
+        exam_list= validate_uploads()
+        pickling.pickle_to_file('uploads/exam_list_before_cropping.pkl', exam_list)
 
-        patch_size=256,
+        clear_uploads(CROPPED_IMAGE_PATH)
+        crop_mammogram(
+            input_data_folder=DATA_FOLDER, 
+            exam_list_path=INITIAL_EXAM_LIST_PATH, 
+            cropped_exam_list_path=CROPPED_EXAM_LIST_PATH, 
+            output_data_folder=CROPPED_IMAGE_PATH, 
+            num_processes=NUM_PROCESSES,
+            num_iterations=100,
+            buffer_size=50,
+        )
+        print("Stage 2: Extract Centers")
+        exam_list = pickling.unpickle_from_file(CROPPED_EXAM_LIST_PATH)
+        data_list = data_handling.unpack_exam_into_images(exam_list, cropped=True)
+        optimal_centers = get_optimal_centers(
+            data_list=data_list,
+            data_prefix=CROPPED_IMAGE_PATH,
+            num_processes=NUM_PROCESSES
+        )
+        data_handling.add_metadata(exam_list, "best_center", optimal_centers)
+        os.makedirs(os.path.dirname(EXAM_LIST_PATH), exist_ok=True)
+        pickling.pickle_to_file(EXAM_LIST_PATH, exam_list)
 
-        stride_fixed=70,
-        more_patches=5,
-        minibatch_size=HEATMAP_BATCH_SIZE,
-        seed=0,
+        print("Stage 3: Generate Heatmaps")
 
-        initial_parameters=PATCH_MODEL_PATH,
-        input_channels=3,
-        number_of_classes=4,
+        parameters = dict(
+            device_type=DEVICE_TYPE,
+            gpu_number=GPU_NUMBER,
 
-        data_file=EXAM_LIST_PATH,
-        original_image_path=CROPPED_IMAGE_PATH,
-        save_heatmap_path=[os.path.join(HEATMAPS_PATH, 'heatmap_malignant'),
-                           os.path.join(HEATMAPS_PATH, 'heatmap_benign')],
+            patch_size=256,
 
-        heatmap_type=[0, 1],  # 0: malignant 1: benign 0: nothing
+            stride_fixed=70,
+            more_patches=5,
+            minibatch_size=HEATMAP_BATCH_SIZE,
+            seed=0,
 
-        use_hdf5=False
-    )
-    random.seed(parameters['seed'])
-    model, device = load_model(parameters)
-    produce_heatmaps(model, device, parameters)
+            initial_parameters=PATCH_MODEL_PATH,
+            input_channels=3,
+            number_of_classes=4,
 
-    print("Stage 4a: Run Classifier (Image)")
-    
-    parameters = {
+            data_file=EXAM_LIST_PATH,
+            original_image_path=CROPPED_IMAGE_PATH,
+            save_heatmap_path=[os.path.join(HEATMAPS_PATH, 'heatmap_malignant'),
+                               os.path.join(HEATMAPS_PATH, 'heatmap_benign')],
+
+            heatmap_type=[0, 1],  # 0: malignant 1: benign 0: nothing
+
+            use_hdf5=False
+        )
+        random.seed(parameters['seed'])
+        model, device = load_model(parameters)
+        produce_heatmaps(model, device, parameters)
+
+        print("Stage 4a: Run Classifier (Image)")
+
+        parameters = {
+                "device_type": DEVICE_TYPE,
+                "gpu_number": GPU_NUMBER,
+                "max_crop_noise": (100, 100),
+                "max_crop_size_noise": 100,
+                "image_path": CROPPED_IMAGE_PATH,
+                "batch_size": 1,
+                "seed": 0,
+                "augmentation": True,
+                "num_epochs": NUM_EPOCHS,
+                "use_heatmaps": False,
+                "heatmaps_path": None,
+                "use_hdf5": False,
+                "model_mode": MODELMODES.VIEW_SPLIT,
+                "model_path": IMAGE_MODEL_PATH,
+            }
+        load_run_save(
+                data_path=EXAM_LIST_PATH,
+                output_path=IMAGE_PREDICTIONS_PATH,
+                parameters=parameters,
+            )
+
+
+        print("Stage 4b: Run Classifier (Image + Heatmaps)")
+
+        parameters = {
             "device_type": DEVICE_TYPE,
             "gpu_number": GPU_NUMBER,
             "max_crop_noise": (100, 100),
@@ -133,58 +169,76 @@ def get_predictions():
             "seed": 0,
             "augmentation": True,
             "num_epochs": NUM_EPOCHS,
-            "use_heatmaps": False,
-            "heatmaps_path": None,
+            "use_heatmaps": True,
+            "heatmaps_path": HEATMAPS_PATH,
             "use_hdf5": False,
             "model_mode": MODELMODES.VIEW_SPLIT,
-            "model_path": IMAGE_MODEL_PATH,
+            "model_path": IMAGEHEATMAPS_MODEL_PATH,
         }
-    load_run_save(
+        load_run_save(
             data_path=EXAM_LIST_PATH,
-            output_path=IMAGE_PREDICTIONS_PATH,
+            output_path=IMAGEHEATMAPS_PREDICTIONS_PATH,
             parameters=parameters,
-        )
-    
-    
-    print("Stage 4b: Run Classifier (Image + Heatmaps)")
-    
-    parameters = {
-        "device_type": DEVICE_TYPE,
-        "gpu_number": GPU_NUMBER,
-        "max_crop_noise": (100, 100),
-        "max_crop_size_noise": 100,
-        "image_path": CROPPED_IMAGE_PATH,
-        "batch_size": 1,
-        "seed": 0,
-        "augmentation": True,
-        "num_epochs": NUM_EPOCHS,
-        "use_heatmaps": True,
-        "heatmaps_path": HEATMAPS_PATH,
-        "use_hdf5": False,
-        "model_mode": MODELMODES.VIEW_SPLIT,
-        "model_path": IMAGEHEATMAPS_MODEL_PATH,
-    }
-    load_run_save(
-        data_path=EXAM_LIST_PATH,
-        output_path=IMAGEHEATMAPS_PREDICTIONS_PATH,
-        parameters=parameters,
-    ) 
-    
-    image_df = pd.read_csv(IMAGE_PREDICTIONS_PATH)
-    image_and_heatmap_df = pd.read_csv(IMAGEHEATMAPS_PREDICTIONS_PATH)
+        ) 
 
-    image_df['type'] = 'image only'
-    image_and_heatmap_df['type'] = 'image+heatmaps'
-    final_df = pd.concat([image_df, image_and_heatmap_df], ignore_index=True)
-    final_df.set_index('type')
-    results = final_df.to_json(orient='records')
+        df = pd.read_csv(IMAGE_PREDICTIONS_PATH)
+        results_img_only = df.to_dict('records')[0]
 
+        df = pd.read_csv(IMAGEHEATMAPS_PREDICTIONS_PATH)
+        results_img_heatmaps = df.to_dict('records')[0]
+
+        results = {}
+        results['image_only'] = results_img_only
+        results['image+heatmaps'] = results_img_heatmaps
+        data['predictions'] = results
+        data['success'] = True
+        
+        
+    except ValueError as e:
+        data['Error'] = str(e)
+    except Exception as e:
+        data['Error'] = str(e)
     
-    return results
+    return flask.jsonify(data)
+
+def dummy_predictions():
+    data = {"success": False}
+    try:
+        exam_list= validate_uploads()
+        print(exam_list)
+        results = [{
+            "left_benign": 0.058,
+            "right_benign": 0.0754,
+            "left_malignant": 0.0091,
+            "right_malignant": 0.0179,
+            "type": "image only"
+            },
+            {
+            "left_benign": 0.0612,
+            "right_benign": 0.0555,
+            "left_malignant": 0.0099,
+            "right_malignant": 0.0063,
+            "type": "image+heatmaps"
+            }]
+        data['predictions'] = results
+        data['success'] = True
+        
+    except ValueError as e:
+        print(e)
+        data["Error"] = str(e)
+    except Exception as e:
+        print(e)
+        data["Error"] = str(e)
+        
+    return flask.jsonify(data)
         
 @app.route("/")
 def home():
     return render_template('upload.html')
+
+@app.route("/api/dummy", methods=["POST"])
+def dummy_api():
+    return dummy_predictions()
 
 @app.route("/api/v0", methods=["POST"])
 def process_api():
